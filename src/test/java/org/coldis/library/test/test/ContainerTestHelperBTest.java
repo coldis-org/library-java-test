@@ -15,7 +15,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 		classes = SpringTestApplication.class,
 		webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
 )
-@ExtendWith(value = { StopTestWithContainerExtension.class })
 public class ContainerTestHelperBTest extends ContainerTestHelperATest {
 
 }

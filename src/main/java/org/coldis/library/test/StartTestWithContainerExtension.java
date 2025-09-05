@@ -2,14 +2,14 @@ package org.coldis.library.test;
 
 import java.lang.reflect.Field;
 import java.util.Collection;
-import java.util.IdentityHashMap;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
+import org.junit.jupiter.api.extension.ExtensionContext.Store.CloseableResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.GenericContainer;
@@ -24,8 +24,11 @@ public class StartTestWithContainerExtension implements BeforeAllCallback {
 	 */
 	private static final Logger LOGGER = LoggerFactory.getLogger(StartTestWithContainerExtension.class);
 
-	/** Container lock */
-	public static Map<GenericContainer<?>, Integer> CONTAINER_LOCK = new IdentityHashMap<>();
+	/** Single thread executor. */
+	private final Executor singleThreadExecutor = Executors.newSingleThreadExecutor();
+
+	/** Multi thread executor. */
+	private final Executor multiThreadExecutor = Executors.newWorkStealingPool();
 
 	/**
 	 * Before each test.
@@ -36,19 +39,19 @@ public class StartTestWithContainerExtension implements BeforeAllCallback {
 	@Override
 	public void beforeAll(
 			final ExtensionContext context) throws Exception {
+
 		final Class<?> testClass = context.getTestClass().orElseThrow();
-		final Collection<Field> containersFieldsFromTests = TestWithContainerExtensionHelper.getContainersFieldsFromTests(context);
-		final Executor executor = TestWithContainerExtensionHelper.shouldStartTestContainersInParallel(testClass) ? Executors.newWorkStealingPool()
-				: Executors.newSingleThreadExecutor();
+		final Collection<Field> containersFields = TestWithContainerExtensionHelper.getContainersFieldsFromTests(context);
+		final Executor executor = TestWithContainerExtensionHelper.shouldStartTestContainersInParallel(testClass) ? this.multiThreadExecutor
+				: this.singleThreadExecutor;
+
+		// Starts containers.
 		@SuppressWarnings("unchecked")
-		final CompletableFuture<Void>[] containersFieldsJobs = containersFieldsFromTests.stream().map(field -> (CompletableFuture.runAsync((() -> {
+		final CompletableFuture<Void>[] containersStartJobs = containersFields.stream().map(field -> (CompletableFuture.runAsync((() -> {
 			// Starts the container if not already started.
 			try {
 				final GenericContainer<?> container = (GenericContainer<?>) field.get(null);
-				StartTestWithContainerExtension.CONTAINER_LOCK.computeIfAbsent(container, k -> 0);
-				StartTestWithContainerExtension.CONTAINER_LOCK.put(container, StartTestWithContainerExtension.CONTAINER_LOCK.get(container) + 1);
-				if (!TestWithContainerExtensionHelper.shouldReuseTestContainers(testClass) || !container.isRunning()
-						|| (StartTestWithContainerExtension.CONTAINER_LOCK.getOrDefault(container, 0) <= 0)) {
+				if (!container.isRunning()) {
 					TestWithContainerExtensionHelper.startTestContainer(testClass, field);
 				}
 			}
@@ -56,7 +59,22 @@ public class StartTestWithContainerExtension implements BeforeAllCallback {
 				throw new RuntimeException(exception);
 			}
 		}), executor))).toArray(CompletableFuture[]::new);
-		CompletableFuture.allOf(containersFieldsJobs).get();
+		CompletableFuture.allOf(containersStartJobs).get();
+
+		// Registers shutdown hooks.
+		containersFields.stream().map(field -> {
+			try {
+				return (GenericContainer<?>) field.get(null);
+			}
+			catch (final Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		}).forEach(container -> context.getRoot().getStore(Namespace.GLOBAL).getOrComputeIfAbsent("container-" + container.hashCode(), key -> {
+			return (CloseableResource) () -> {
+				container.stop();
+			};
+		}, CloseableResource.class));
+
 	}
 
 }
