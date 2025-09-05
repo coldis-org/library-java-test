@@ -60,7 +60,7 @@ public class StopTestWithContainerExtension implements AfterAllCallback {
 							catch (final Exception exception) {
 								throw new RuntimeException(exception);
 							}
-						});
+						}, Executors.newSingleThreadExecutor());
 					}
 					else {
 						TestWithContainerExtensionHelper.stopTestContainer(field);
