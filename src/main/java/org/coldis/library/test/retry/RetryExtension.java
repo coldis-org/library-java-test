@@ -68,10 +68,10 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 	private static final int MAX_ATTEMPTS = 3;
 
 	/** Default fixed delay (ms) added before the next attempt. */
-	public static final Integer FIXED_DELAY_BEFORE_NEXT_ATTEMPT = 1000;
+	public static final Integer FIXED_DELAY_BEFORE_NEXT_ATTEMPT = 500;
 
 	/** Default random delay (ms upper bound) added before the next attempt. */
-	public static final Integer RANDOM_DELAY_BEFORE_NEXT_ATTEMPT = 10000;
+	public static final Integer RANDOM_DELAY_BEFORE_NEXT_ATTEMPT = 3_000;
 
 	/**
 	 * @return The configured maximum number of attempts to run a test method before
@@ -97,6 +97,27 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 						Long.parseLong(System.getProperty("project.config.source.test.retry-and-fail-fast.random-delay-before-next-attempt",
 								String.valueOf(RetryExtension.RANDOM_DELAY_BEFORE_NEXT_ATTEMPT)))))
 				* attempt;
+	}
+	
+	/**
+	 * Attempts to unwrap the original cause from reflective invocation layers for
+	 * clearer logging.
+	 *
+	 * @param  error the caught error, possibly an InvocationTargetException
+	 * @return       the most relevant underlying Throwable for logging
+	 */
+	private Throwable getOriginalError(
+			final Throwable error) {
+		Throwable originalError = error;
+		// Gets the actual error, if it is an InvocationTargetException and the cause is
+		// not null,
+		if ((error instanceof InvocationTargetException) && (error.getCause() != null) && (error.getStackTrace().length >= 3)
+				&& error.getStackTrace()[2].getClassName().equals(RetryExtension.class.getName())) {
+			// Get the original exception
+			originalError = error.getCause();
+		}
+
+		return originalError;
 	}
 
 	/**
@@ -145,7 +166,6 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 
 				// Runs afterEach methods.
 				final Method[] afterEachMethods = context.getRequiredTestClass().getDeclaredMethods();
-
 				for (final Method method : afterEachMethods) {
 					if (method.isAnnotationPresent(org.junit.jupiter.api.AfterEach.class)) {
 						method.setAccessible(true);
@@ -185,24 +205,4 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 		throw actualThrowable;
 	}
 
-	/**
-	 * Attempts to unwrap the original cause from reflective invocation layers for
-	 * clearer logging.
-	 *
-	 * @param  error the caught error, possibly an InvocationTargetException
-	 * @return       the most relevant underlying Throwable for logging
-	 */
-	private Throwable getOriginalError(
-			final Throwable error) {
-		Throwable originalError = error;
-		// Gets the actual error, if it is an InvocationTargetException and the cause is
-		// not null,
-		if ((error instanceof InvocationTargetException) && (error.getCause() != null) && (error.getStackTrace().length >= 3)
-				&& error.getStackTrace()[2].getClassName().equals(RetryExtension.class.getName())) {
-			// Get the original exception
-			originalError = error.getCause();
-		}
-
-		return originalError;
-	}
 }
