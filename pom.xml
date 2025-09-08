@@ -10,7 +10,7 @@
 
 	<groupId>org.coldis.library</groupId>
 	<artifactId>test</artifactId>
-	<version>2.0.73</version>
+	<version>2.0.74-SNAPSHOT</version>
 	<packaging>jar</packaging>
 
 	<name>Test utils</name>
@@ -38,7 +38,7 @@
 		<connection>scm:git:https://github.com/coldis-org/library-java-test.git</connection>
 		<developerConnection>
 			scm:git:git@github.com:coldis-org/library-java-test.git</developerConnection>
-		<tag>test-2.0.73</tag>
+		<tag>HEAD</tag>
 	</scm>
 
 	<dependencies>
