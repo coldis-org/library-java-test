@@ -96,9 +96,9 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 				+ RandomHelper.getPositiveRandomLong(
 						Long.parseLong(System.getProperty("project.config.source.test.retry-and-fail-fast.random-delay-before-next-attempt",
 								String.valueOf(RetryExtension.RANDOM_DELAY_BEFORE_NEXT_ATTEMPT)))))
-				* attempt;
+				* (attempt - 1);
 	}
-	
+
 	/**
 	 * Attempts to unwrap the original cause from reflective invocation layers for
 	 * clearer logging.
@@ -148,6 +148,17 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 			RetryExtension.LOGGER.info("Running attempt " + attempt + " of " + RetryExtension.getMaxAttempts() + " for "
 					+ context.getRequiredTestMethod().getDeclaringClass().getName() + "." + context.getRequiredTestMethod().getName() + ". Error was: "
 					+ actualThrowable.getClass() + "-" + actualThrowable.getMessage());
+
+			// Waits before the next attempt.
+			try {
+				final Long delayBeforeNextAttempt = RetryExtension.getDelayBeforeNextAttempt(attempt);
+				RetryExtension.LOGGER.warn("Waiting " + delayBeforeNextAttempt + " ms before next attempt...");
+				Thread.sleep(delayBeforeNextAttempt);
+			}
+			catch (final InterruptedException exception) {
+				RetryExtension.LOGGER.error("Error sleeping before next attempt: " + exception.getMessage(), exception);
+			}
+
 			try {
 				// Runs before methods.
 				testContextManager.beforeTestMethod(context.getRequiredTestInstance(), context.getRequiredTestMethod());
@@ -192,13 +203,6 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 				}
 			}
 
-			// Waits before the next attempt.
-			try {
-				Thread.sleep(RetryExtension.getDelayBeforeNextAttempt(attempt));
-			}
-			catch (final InterruptedException exception) {
-				RetryExtension.LOGGER.error("Error sleeping before next attempt: " + exception.getMessage(), exception);
-			}
 		}
 
 		// If the test method failed after all attempts throw the exception.
