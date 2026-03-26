@@ -12,7 +12,6 @@ import org.springframework.test.annotation.DirtiesContext;
 /**
  * Spring test helper.
  */
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public class SpringTestHelper extends TestHelper {
 
 	/**

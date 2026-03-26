@@ -130,5 +130,22 @@
 		</dependency>
 
 	</dependencies>
-	
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>aspectj-maven-plugin</artifactId>
+				<configuration>
+					<weaveDependencies>
+						<weaveDependency>
+							<groupId>org.coldis.library</groupId>
+							<artifactId>service-client</artifactId>
+						</weaveDependency>
+					</weaveDependencies>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
 </project>
