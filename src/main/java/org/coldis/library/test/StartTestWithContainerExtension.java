@@ -61,19 +61,35 @@ public class StartTestWithContainerExtension implements BeforeAllCallback {
 		}), executor))).toArray(CompletableFuture[]::new);
 		CompletableFuture.allOf(containersStartJobs).get();
 
-		// Registers shutdown hooks.
+		// Acquires references and registers shutdown hooks.
+		final long stopDelay = TestWithContainerExtensionHelper.getStopDelay(testClass);
 		containersFields.stream().map(field -> {
 			try {
-				return (GenericContainer<?>) field.get(null);
+				return new Object[] { field.getName(), (GenericContainer<?>) field.get(null) };
 			}
 			catch (final Exception exception) {
 				throw new RuntimeException(exception);
 			}
-		}).forEach(container -> context.getRoot().getStore(Namespace.GLOBAL).getOrComputeIfAbsent("container-" + container.hashCode(), key -> {
-			return (CloseableResource) () -> {
-				container.stop();
-			};
-		}, CloseableResource.class));
+		}).forEach(pair -> {
+			final String containerKey = (String) pair[0];
+			final GenericContainer<?> container = (GenericContainer<?>) pair[1];
+			TestWithContainerExtensionHelper.acquireContainer(containerKey);
+			context.getStore(Namespace.create(testClass)).getOrComputeIfAbsent("container-" + containerKey, key -> {
+				return (CloseableResource) () -> {
+					TestWithContainerExtensionHelper.releaseContainer(containerKey);
+					if (stopDelay > 0) {
+						TestWithContainerExtensionHelper.scheduleDelayedStop(containerKey, container, stopDelay);
+					}
+					else {
+						final java.util.concurrent.atomic.AtomicInteger refCount =
+								TestWithContainerExtensionHelper.getRefCount(containerKey);
+						if (refCount == null || refCount.get() <= 0) {
+							container.stop();
+						}
+					}
+				};
+			}, CloseableResource.class);
+		});
 
 	}
 

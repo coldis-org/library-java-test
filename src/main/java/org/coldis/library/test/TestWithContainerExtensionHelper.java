@@ -4,6 +4,8 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.junit.jupiter.api.extension.ExtensionContext;
@@ -20,6 +22,9 @@ public class TestWithContainerExtensionHelper {
 	 * Logger.
 	 */
 	private static final Logger LOGGER = LoggerFactory.getLogger(TestWithContainerExtensionHelper.class);
+
+	/** Container usage reference counts. */
+	private static final ConcurrentHashMap<String, AtomicInteger> CONTAINER_REF_COUNTS = new ConcurrentHashMap<>();
 
 	/**
 	 * Gets the containers from tests.
@@ -53,6 +58,9 @@ public class TestWithContainerExtensionHelper {
 		try {
 			TestWithContainerExtensionHelper.LOGGER.info("Test container '{}' starting for class '{}'.", field.getName(), testClass.getSimpleName());
 			final GenericContainer<?> container = (GenericContainer<?>) field.get(null);
+			if (TestWithContainerExtensionHelper.shouldReuseTestContainers(testClass)) {
+				container.withReuse(true);
+			}
 			container.start();
 			// Sets the container ports as system properties.
 			container.getExposedPorts().forEach((
@@ -97,6 +105,83 @@ public class TestWithContainerExtensionHelper {
 	public static Boolean shouldReuseTestContainers(
 			final Class<?> testClass) {
 		return (testClass.getAnnotation(TestWithContainer.class) != null) && testClass.getAnnotation(TestWithContainer.class).reuse();
+	}
+
+	/**
+	 * Gets the stop delay in seconds.
+	 *
+	 * @param  testClass Test class.
+	 * @return           The stop delay in seconds.
+	 */
+	public static long getStopDelay(
+			final Class<?> testClass) {
+		final TestWithContainer annotation = testClass.getAnnotation(TestWithContainer.class);
+		return (annotation != null) ? annotation.stopDelay() : 0;
+	}
+
+	/**
+	 * Gets the ref count for a container.
+	 *
+	 * @param  containerKey Unique key identifying the container.
+	 * @return              The ref count, or null if not tracked.
+	 */
+	public static AtomicInteger getRefCount(final String containerKey) {
+		return CONTAINER_REF_COUNTS.get(containerKey);
+	}
+
+	/**
+	 * Acquires a reference to a container, incrementing its usage count.
+	 *
+	 * @param containerKey Unique key identifying the container.
+	 */
+	public static void acquireContainer(final String containerKey) {
+		CONTAINER_REF_COUNTS.computeIfAbsent(containerKey, key -> new AtomicInteger(0)).incrementAndGet();
+		TestWithContainerExtensionHelper.LOGGER.debug("Container '{}' acquired, ref count: {}.", containerKey,
+				CONTAINER_REF_COUNTS.get(containerKey).get());
+	}
+
+	/**
+	 * Releases a reference to a container, decrementing its usage count.
+	 *
+	 * @param  containerKey Unique key identifying the container.
+	 */
+	public static void releaseContainer(final String containerKey) {
+		final AtomicInteger refCount = CONTAINER_REF_COUNTS.get(containerKey);
+		if (refCount != null) {
+			final int remaining = refCount.decrementAndGet();
+			TestWithContainerExtensionHelper.LOGGER.debug("Container '{}' released, ref count: {}.", containerKey, remaining);
+		}
+	}
+
+	/**
+	 * Schedules a delayed container stop on a daemon thread. After the delay,
+	 * re-checks the ref count — if another test class acquired the container
+	 * during the wait, the stop is skipped.
+	 *
+	 * @param containerKey Unique key identifying the container.
+	 * @param container    The container to stop.
+	 * @param stopDelay    Seconds to wait before stopping.
+	 */
+	public static void scheduleDelayedStop(final String containerKey, final GenericContainer<?> container, final long stopDelay) {
+		final Thread stopThread = new Thread(() -> {
+			try {
+				TestWithContainerExtensionHelper.LOGGER.info("Container '{}' has no references, waiting {}s before stopping.", containerKey, stopDelay);
+				Thread.sleep(stopDelay * 1000);
+			}
+			catch (final InterruptedException exception) {
+				Thread.currentThread().interrupt();
+				return;
+			}
+			final AtomicInteger refCount = CONTAINER_REF_COUNTS.get(containerKey);
+			if (refCount == null || refCount.get() <= 0) {
+				TestWithContainerExtensionHelper.LOGGER.info("Container '{}' still has no references after delay, stopping.", containerKey);
+				container.stop();
+			}
+			else {
+				TestWithContainerExtensionHelper.LOGGER.info("Container '{}' was re-acquired during delay, skipping stop.", containerKey);
+			}
+		}, "container-stop-" + containerKey);
+		stopThread.start();
 	}
 
 	/**

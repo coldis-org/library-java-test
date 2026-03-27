@@ -26,6 +26,12 @@ public @interface TestWithContainer {
 	/**
 	 * Whether to reuse containers. Defaults to {@code true}.
 	 */
-	boolean reuse() default false;
-	
+	boolean reuse() default true;
+
+	/**
+	 * Seconds to wait before stopping a container after the last test class
+	 * releases it. Gives the next test class time to acquire it. Defaults to 30.
+	 */
+	long stopDelay() default 30;
+
 }
