@@ -14,7 +14,6 @@ import org.springframework.test.annotation.DirtiesContext;
 @Inherited
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public @interface TestWithContainer {
 
 	/**
