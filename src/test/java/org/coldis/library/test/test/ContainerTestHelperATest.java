@@ -19,7 +19,7 @@ import org.testcontainers.containers.GenericContainer;
 /**
  * Test helper test.
  */
-@TestWithContainer(parallel = true, reuse = true)
+@TestWithContainer(parallel = true)
 @ExtendWith(value = { StartTestWithContainerExtension.class })
 @SpringBootTest(
 		classes = SpringTestApplication.class,

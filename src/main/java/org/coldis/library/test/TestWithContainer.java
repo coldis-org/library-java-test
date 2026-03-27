@@ -32,6 +32,6 @@ public @interface TestWithContainer {
 	 * Seconds to wait before stopping a container after the last test class
 	 * releases it. Gives the next test class time to acquire it. Defaults to 30.
 	 */
-	long stopDelay() default 30;
+	long stopDelay() default 15;
 
 }

@@ -57,15 +57,29 @@ public class TestWithContainerExtensionHelper {
 			final Field field) {
 		try {
 			TestWithContainerExtensionHelper.LOGGER.info("Test container '{}' starting for class '{}'.", field.getName(), testClass.getSimpleName());
-			final GenericContainer<?> container = (GenericContainer<?>) field.get(null);
+			GenericContainer<?> container = (GenericContainer<?>) field.get(null);
 			if (TestWithContainerExtensionHelper.shouldReuseTestContainers(testClass)) {
 				container.withReuse(true);
 			}
-			container.start();
+			try {
+				container.start();
+			}
+			catch (final Exception startException) {
+				// Container was previously stopped and cannot be restarted — recreate it.
+				TestWithContainerExtensionHelper.LOGGER.info("Test container '{}' failed to start, recreating for class '{}'.", field.getName(),
+						testClass.getSimpleName());
+				container = TestWithContainerExtensionHelper.recreateContainer(testClass, field);
+				if (TestWithContainerExtensionHelper.shouldReuseTestContainers(testClass)) {
+					container.withReuse(true);
+				}
+				container.start();
+			}
+			// Re-read the field to get the final (possibly recreated) container reference.
+			final GenericContainer<?> startedContainer = (GenericContainer<?>) field.get(null);
 			// Sets the container ports as system properties.
-			container.getExposedPorts().forEach((
+			startedContainer.getExposedPorts().forEach((
 					exposedPort) -> {
-				final Integer mappedPort = container.getMappedPort(exposedPort);
+				final Integer mappedPort = startedContainer.getMappedPort(exposedPort);
 				final String mappedPortPropertyName = field.getName() + "_" + exposedPort;
 				System.setProperty(mappedPortPropertyName, mappedPort.toString());
 				TestWithContainerExtensionHelper.LOGGER.info("Test container '{}' for class '{}' setting {}={}", field.getName(), testClass.getSimpleName(),
@@ -73,7 +87,7 @@ public class TestWithContainerExtensionHelper {
 			});
 			// Sets the container host as system property.
 			final String containerIpAddressEnv = field.getName() + "_IP";
-			final String containerIpAddress = container.getContainerInfo().getNetworkSettings().getIpAddress();
+			final String containerIpAddress = startedContainer.getContainerInfo().getNetworkSettings().getIpAddress();
 			System.setProperty(containerIpAddressEnv, containerIpAddress);
 			TestWithContainerExtensionHelper.LOGGER.info("Test container '{}' for class '{}' setting {}={}", field.getName(), testClass.getSimpleName(),
 					containerIpAddressEnv, containerIpAddress);
@@ -83,6 +97,40 @@ public class TestWithContainerExtensionHelper {
 					exception.getLocalizedMessage());
 			TestWithContainerExtensionHelper.LOGGER.debug("Error starting container.", exception);
 		}
+	}
+
+	/**
+	 * Recreates a container by finding and invoking the corresponding factory
+	 * method on TestHelper, then updates both the TestHelper field and the
+	 * test class field with the new instance.
+	 *
+	 * @param  testClass Test class.
+	 * @param  field     Container field on the test class.
+	 * @return           The new container instance.
+	 */
+	@SuppressWarnings("unchecked")
+	private static GenericContainer<?> recreateContainer(
+			final Class<?> testClass,
+			final Field field) throws Exception {
+		// Find the matching field on TestHelper.
+		final Field helperField = FieldUtils.getField(TestHelper.class, field.getName(), true);
+		if (helperField != null) {
+			// Derive the factory method name from the field name (e.g. POSTGRES_CONTAINER -> createPostgresContainer).
+			final String[] parts = field.getName().split("_");
+			if (parts.length >= 1) {
+				final String methodName = "create" + parts[0].substring(0, 1).toUpperCase() + parts[0].substring(1).toLowerCase() + "Container";
+				final java.lang.reflect.Method factoryMethod = TestHelper.class.getMethod(methodName);
+				final GenericContainer<?> newContainer = (GenericContainer<?>) factoryMethod.invoke(null);
+				// Update both TestHelper and the test class field.
+				FieldUtils.writeStaticField(helperField, newContainer, true);
+				if (!Objects.equals(field.getDeclaringClass(), TestHelper.class)) {
+					FieldUtils.writeStaticField(field, newContainer, true);
+				}
+				TestWithContainerExtensionHelper.LOGGER.info("Test container '{}' recreated for class '{}'.", field.getName(), testClass.getSimpleName());
+				return newContainer;
+			}
+		}
+		throw new IllegalStateException("Cannot recreate container for field: " + field.getName());
 	}
 
 	/**

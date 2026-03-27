@@ -6,6 +6,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
@@ -17,6 +18,7 @@ import org.testcontainers.containers.GenericContainer;
 /**
  * Container extension.
  */
+@Order(Integer.MIN_VALUE)
 public class StartTestWithContainerExtension implements BeforeAllCallback {
 
 	/**
@@ -45,6 +47,10 @@ public class StartTestWithContainerExtension implements BeforeAllCallback {
 		final Executor executor = TestWithContainerExtensionHelper.shouldStartTestContainersInParallel(testClass) ? this.multiThreadExecutor
 				: this.singleThreadExecutor;
 
+		// Acquires references first to prevent delayed stop threads from stopping containers.
+		final long stopDelay = TestWithContainerExtensionHelper.getStopDelay(testClass);
+		containersFields.forEach(field -> TestWithContainerExtensionHelper.acquireContainer(field.getName()));
+
 		// Starts containers.
 		@SuppressWarnings("unchecked")
 		final CompletableFuture<Void>[] containersStartJobs = containersFields.stream().map(field -> (CompletableFuture.runAsync((() -> {
@@ -61,22 +67,20 @@ public class StartTestWithContainerExtension implements BeforeAllCallback {
 		}), executor))).toArray(CompletableFuture[]::new);
 		CompletableFuture.allOf(containersStartJobs).get();
 
-		// Acquires references and registers shutdown hooks.
-		final long stopDelay = TestWithContainerExtensionHelper.getStopDelay(testClass);
-		containersFields.stream().map(field -> {
-			try {
-				return new Object[] { field.getName(), (GenericContainer<?>) field.get(null) };
-			}
-			catch (final Exception exception) {
-				throw new RuntimeException(exception);
-			}
-		}).forEach(pair -> {
-			final String containerKey = (String) pair[0];
-			final GenericContainer<?> container = (GenericContainer<?>) pair[1];
-			TestWithContainerExtensionHelper.acquireContainer(containerKey);
+		// Registers shutdown hooks.
+		containersFields.forEach(field -> {
+			final String containerKey = field.getName();
 			context.getStore(Namespace.create(testClass)).getOrComputeIfAbsent("container-" + containerKey, key -> {
 				return (CloseableResource) () -> {
 					TestWithContainerExtensionHelper.releaseContainer(containerKey);
+					// Re-read the field to get the current (possibly recreated) container.
+					final GenericContainer<?> container;
+					try {
+						container = (GenericContainer<?>) field.get(null);
+					}
+					catch (final Exception exception) {
+						throw new RuntimeException(exception);
+					}
 					if (stopDelay > 0) {
 						TestWithContainerExtensionHelper.scheduleDelayedStop(containerKey, container, stopDelay);
 					}
