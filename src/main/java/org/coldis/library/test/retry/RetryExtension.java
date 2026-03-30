@@ -2,6 +2,8 @@ package org.coldis.library.test.retry;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -100,12 +102,26 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 	}
 
 	/**
-	 * Attempts to unwrap the original cause from reflective invocation layers for
-	 * clearer logging.
-	 *
-	 * @param  error the caught error, possibly an InvocationTargetException
-	 * @return       the most relevant underlying Throwable for logging
+	 * Collects all methods annotated with the given annotation from the class
+	 * hierarchy (subclass first, walking up to Object).
 	 */
+	private List<Method> getAnnotatedMethods(
+			final Class<?> testClass,
+			final Class<? extends java.lang.annotation.Annotation> annotation) {
+		final List<Method> methods = new ArrayList<>();
+		Class<?> current = testClass;
+		while (current != null && current != Object.class) {
+			for (final Method method : current.getDeclaredMethods()) {
+				if (method.isAnnotationPresent(annotation)) {
+					method.setAccessible(true);
+					methods.add(method);
+				}
+			}
+			current = current.getSuperclass();
+		}
+		return methods;
+	}
+
 	private Throwable getOriginalError(
 			final Throwable error) {
 		Throwable originalError = error;
@@ -164,25 +180,15 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 				testContextManager.beforeTestMethod(context.getRequiredTestInstance(), context.getRequiredTestMethod());
 
 				// Runs beforeEach methods.
-				final Method[] beforeEachMethods = context.getRequiredTestClass().getDeclaredMethods();
+				final List<Method> beforeEachMethods = this.getAnnotatedMethods(context.getRequiredTestInstance().getClass(), org.junit.jupiter.api.BeforeEach.class);
+				RetryExtension.LOGGER.info("Found " + beforeEachMethods.size() + " @BeforeEach methods for " + context.getRequiredTestInstance().getClass().getName());
 				for (final Method method : beforeEachMethods) {
-					if (method.isAnnotationPresent(org.junit.jupiter.api.BeforeEach.class)) {
-						method.setAccessible(true);
-						method.invoke(context.getRequiredTestInstance());
-					}
+					RetryExtension.LOGGER.info("Running @BeforeEach: " + method.getDeclaringClass().getName() + "." + method.getName());
+					method.invoke(context.getRequiredTestInstance());
 				}
 
 				// Runs the test method.
 				context.getRequiredTestMethod().invoke(context.getRequiredTestInstance());
-
-				// Runs afterEach methods.
-				final Method[] afterEachMethods = context.getRequiredTestClass().getDeclaredMethods();
-				for (final Method method : afterEachMethods) {
-					if (method.isAnnotationPresent(org.junit.jupiter.api.AfterEach.class)) {
-						method.setAccessible(true);
-						method.invoke(context.getRequiredTestInstance());
-					}
-				}
 
 				// If the test method was executed successfully, exit the loop/method.
 				return;
@@ -192,8 +198,21 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 			catch (final Throwable error) {
 				actualThrowable = this.getOriginalError(error);
 			}
-			// Finish the test context manager.
+			// Always run afterEach and finish the test context manager.
 			finally {
+				try {
+					// Runs afterEach methods.
+					final List<Method> afterEachMethods = this.getAnnotatedMethods(context.getRequiredTestInstance().getClass(), org.junit.jupiter.api.AfterEach.class);
+					RetryExtension.LOGGER.info("Found " + afterEachMethods.size() + " @AfterEach methods for " + context.getRequiredTestInstance().getClass().getName());
+					for (final Method method : afterEachMethods) {
+						RetryExtension.LOGGER.info("Running @AfterEach: " + method.getDeclaringClass().getName() + "." + method.getName());
+						method.invoke(context.getRequiredTestInstance());
+					}
+				}
+				catch (final Throwable error) {
+					RetryExtension.LOGGER.error("Error running @AfterEach for " + context.getRequiredTestMethod().getDeclaringClass().getName()
+							+ "." + context.getRequiredTestMethod().getName(), error);
+				}
 				try {
 					testContextManager.afterTestMethod(context.getRequiredTestInstance(), context.getRequiredTestMethod(), null);
 				}
