@@ -109,15 +109,21 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 			final Class<?> testClass,
 			final Class<? extends java.lang.annotation.Annotation> annotation) {
 		final List<Method> methods = new ArrayList<>();
-		Class<?> current = testClass;
-		while (current != null && current != Object.class) {
-			for (final Method method : current.getDeclaredMethods()) {
+		Class<?> currentClass = testClass;
+		while (currentClass != null && currentClass != Object.class) {
+			for (final Method method : currentClass.getDeclaredMethods()) {
 				if (method.isAnnotationPresent(annotation)) {
-					method.setAccessible(true);
-					methods.add(method);
+					// Skips methods that are overridden by a subclass (already collected).
+					final boolean overriddenBySubclass = methods.stream()
+							.anyMatch(collected -> collected.getName().equals(method.getName())
+									&& java.util.Arrays.equals(collected.getParameterTypes(), method.getParameterTypes()));
+					if (!overriddenBySubclass) {
+						method.setAccessible(true);
+						methods.add(method);
+					}
 				}
 			}
-			current = current.getSuperclass();
+			currentClass = currentClass.getSuperclass();
 		}
 		return methods;
 	}
@@ -175,14 +181,17 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 				RetryExtension.LOGGER.error("Error sleeping before next attempt: " + exception.getMessage(), exception);
 			}
 
+			// Runs @BeforeEach, the test method, and @AfterEach — matching JUnit's lifecycle contract.
+			Throwable attemptError = null;
 			try {
-				// Runs before methods.
+				// Runs Spring before-test-method callbacks.
 				testContextManager.beforeTestMethod(context.getRequiredTestInstance(), context.getRequiredTestMethod());
 
-				// Runs beforeEach methods.
+				// Runs @BeforeEach methods (superclass first, matching JUnit's contract — stops on first failure).
 				final List<Method> beforeEachMethods = this.getAnnotatedMethods(context.getRequiredTestInstance().getClass(), org.junit.jupiter.api.BeforeEach.class);
 				RetryExtension.LOGGER.info("Found " + beforeEachMethods.size() + " @BeforeEach methods for " + context.getRequiredTestInstance().getClass().getName());
-				for (final Method method : beforeEachMethods) {
+				for (int methodIndex = beforeEachMethods.size() - 1; methodIndex >= 0; methodIndex--) {
+					final Method method = beforeEachMethods.get(methodIndex);
 					RetryExtension.LOGGER.info("Running @BeforeEach: " + method.getDeclaringClass().getName() + "." + method.getName());
 					method.invoke(context.getRequiredTestInstance());
 				}
@@ -190,37 +199,42 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 				// Runs the test method.
 				context.getRequiredTestMethod().invoke(context.getRequiredTestInstance());
 
-				// If the test method was executed successfully, exit the loop/method.
-				return;
-
 			}
-			// Catches any error from the test method or lifecycle methods.
+			// Catches any error from @BeforeEach or the test method.
 			catch (final Throwable error) {
-				actualThrowable = this.getOriginalError(error);
+				attemptError = this.getOriginalError(error);
 			}
-			// Always run afterEach and finish the test context manager.
+			// Always run @AfterEach and Spring after-test-method callbacks.
 			finally {
-				try {
-					// Runs afterEach methods.
-					final List<Method> afterEachMethods = this.getAnnotatedMethods(context.getRequiredTestInstance().getClass(), org.junit.jupiter.api.AfterEach.class);
-					RetryExtension.LOGGER.info("Found " + afterEachMethods.size() + " @AfterEach methods for " + context.getRequiredTestInstance().getClass().getName());
-					for (final Method method : afterEachMethods) {
+				// Runs all @AfterEach methods (subclass first) — all must run even if one fails.
+				final List<Method> afterEachMethods = this.getAnnotatedMethods(context.getRequiredTestInstance().getClass(), org.junit.jupiter.api.AfterEach.class);
+				RetryExtension.LOGGER.info("Found " + afterEachMethods.size() + " @AfterEach methods for " + context.getRequiredTestInstance().getClass().getName());
+				for (final Method method : afterEachMethods) {
+					try {
 						RetryExtension.LOGGER.info("Running @AfterEach: " + method.getDeclaringClass().getName() + "." + method.getName());
 						method.invoke(context.getRequiredTestInstance());
 					}
-				}
-				catch (final Throwable error) {
-					RetryExtension.LOGGER.error("Error running @AfterEach for " + context.getRequiredTestMethod().getDeclaringClass().getName()
-							+ "." + context.getRequiredTestMethod().getName(), error);
+					catch (final Throwable error) {
+						RetryExtension.LOGGER.error("Error running @AfterEach " + method.getDeclaringClass().getName() + "." + method.getName() + ": " + error.getMessage(), error);
+						if (attemptError == null) {
+							attemptError = this.getOriginalError(error);
+						}
+					}
 				}
 				try {
-					testContextManager.afterTestMethod(context.getRequiredTestInstance(), context.getRequiredTestMethod(), null);
+					testContextManager.afterTestMethod(context.getRequiredTestInstance(), context.getRequiredTestMethod(), attemptError);
 				}
 				catch (final Throwable error) {
 					RetryExtension.LOGGER.error("Error finishing test context manager for " + context.getRequiredTestMethod().getDeclaringClass().getName()
 							+ "." + context.getRequiredTestMethod().getName(), error);
 				}
 			}
+
+			// If the attempt succeeded (including @AfterEach), exit.
+			if (attemptError == null) {
+				return;
+			}
+			actualThrowable = attemptError;
 
 		}
 
