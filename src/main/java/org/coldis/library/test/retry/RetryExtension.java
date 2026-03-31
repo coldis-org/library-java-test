@@ -10,9 +10,11 @@ import org.apache.commons.logging.LogFactory;
 import org.coldis.library.helper.RandomHelper;
 import org.coldis.library.test.failfast.FailFastExtension;
 import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
 import org.junit.jupiter.api.extension.TestExecutionExceptionHandler;
 import org.junit.jupiter.api.extension.TestWatcher;
 import org.springframework.test.context.TestContextManager;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
 /**
  * JUnit 5 extension that automatically retries a failing test method a
@@ -128,18 +130,32 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 		return methods;
 	}
 
+	/**
+	 * Retrieves the TestContextManager from Spring's ExtensionContext store (reusing
+	 * the one SpringExtension created), or creates a new one if Spring is not in use.
+	 */
+	private TestContextManager getTestContextManager(
+			final ExtensionContext context) {
+		try {
+			final ExtensionContext.Store store = context.getRoot().getStore(Namespace.create(SpringExtension.class));
+			final TestContextManager existing = store.get(context.getRequiredTestClass(), TestContextManager.class);
+			if (existing != null) {
+				return existing;
+			}
+		}
+		catch (final Exception exception) {
+			RetryExtension.LOGGER.warn("Could not retrieve Spring's TestContextManager, creating a new one.", exception);
+		}
+		return new TestContextManager(context.getRequiredTestClass());
+	}
+
 	private Throwable getOriginalError(
 			final Throwable error) {
-		Throwable originalError = error;
-		// Gets the actual error, if it is an InvocationTargetException and the cause is
-		// not null,
-		if ((error instanceof InvocationTargetException) && (error.getCause() != null) && (error.getStackTrace().length >= 3)
-				&& error.getStackTrace()[2].getClassName().equals(RetryExtension.class.getName())) {
-			// Get the original exception
-			originalError = error.getCause();
+		// Unwraps InvocationTargetException from reflective Method.invoke() calls.
+		if ((error instanceof InvocationTargetException) && (error.getCause() != null)) {
+			return error.getCause();
 		}
-
-		return originalError;
+		return error;
 	}
 
 	/**
@@ -162,7 +178,7 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 			final Throwable throwable) throws Throwable {
 
 		// Retries the test method up to a maximum number of attempts.
-		final TestContextManager testContextManager = new TestContextManager(context.getRequiredTestClass());
+		final TestContextManager testContextManager = this.getTestContextManager(context);
 
 		// Retries the test method up to the maximum number of attempts,
 		Throwable actualThrowable = throwable;
@@ -178,6 +194,7 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 				Thread.sleep(delayBeforeNextAttempt);
 			}
 			catch (final InterruptedException exception) {
+				Thread.currentThread().interrupt();
 				RetryExtension.LOGGER.error("Error sleeping before next attempt: " + exception.getMessage(), exception);
 			}
 
