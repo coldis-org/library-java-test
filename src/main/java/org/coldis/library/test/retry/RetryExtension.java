@@ -159,6 +159,28 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 	}
 
 	/**
+	 * Extracts the most relevant source location from the throwable's stack trace.
+	 * Prefers a frame from the test class itself; falls back to the first frame
+	 * with a line number.
+	 */
+	private String getErrorLocation(
+			final Throwable error,
+			final String testClassName) {
+		StackTraceElement fallback = null;
+		for (final StackTraceElement element : error.getStackTrace()) {
+			if (element.getLineNumber() > 0) {
+				if (element.getClassName().equals(testClassName)) {
+					return element.getFileName() + ":" + element.getLineNumber();
+				}
+				if (fallback == null) {
+					fallback = element;
+				}
+			}
+		}
+		return (fallback != null) ? (fallback.getFileName() + ":" + fallback.getLineNumber()) : "unknown";
+	}
+
+	/**
 	 * Core retry logic. Intercepts a thrown exception from a test method execution,
 	 * then re-executes the test method up to {@link #getMaxAttempts()} times,
 	 * unless fail-fast has already been triggered. Between attempts, waits for the
@@ -183,9 +205,10 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 		// Retries the test method up to the maximum number of attempts,
 		Throwable actualThrowable = throwable;
 		for (int attempt = 2; (attempt <= RetryExtension.getMaxAttempts()) && !FailFastExtension.hasFailed(); attempt++) {
+			final String errorLocation = this.getErrorLocation(actualThrowable, context.getRequiredTestMethod().getDeclaringClass().getName());
 			RetryExtension.LOGGER.info("Running attempt " + attempt + " of " + RetryExtension.getMaxAttempts() + " for "
-					+ context.getRequiredTestMethod().getDeclaringClass().getName() + "." + context.getRequiredTestMethod().getName() + ". Error was: "
-					+ actualThrowable.getClass() + "-" + actualThrowable.getMessage());
+					+ context.getRequiredTestMethod().getDeclaringClass().getName() + "." + context.getRequiredTestMethod().getName() + ". Error at "
+					+ errorLocation + " was: " + actualThrowable.getClass() + "-" + actualThrowable.getMessage());
 
 			// Waits before the next attempt.
 			try {

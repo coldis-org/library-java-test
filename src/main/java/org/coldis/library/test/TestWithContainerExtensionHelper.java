@@ -63,6 +63,11 @@ public class TestWithContainerExtensionHelper {
 			}
 			try {
 				container.start();
+				// Verify the container is actually running after start() — a killed
+				// container may hold stale state causing start() to succeed silently.
+				if (!container.isRunning()) {
+					throw new IllegalStateException("Container '" + field.getName() + "' is not running after start().");
+				}
 			}
 			catch (final Exception startException) {
 				// Container was previously stopped and cannot be restarted — recreate it.

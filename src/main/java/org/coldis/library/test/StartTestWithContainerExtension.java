@@ -8,18 +8,21 @@ import java.util.concurrent.Executors;
 
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
+import org.junit.jupiter.api.extension.BeforeEachCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
 import org.junit.jupiter.api.extension.ExtensionContext.Store.CloseableResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.test.context.TestContextManager;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.testcontainers.containers.GenericContainer;
 
 /**
  * Container extension.
  */
 @Order(Integer.MIN_VALUE)
-public class StartTestWithContainerExtension implements BeforeAllCallback {
+public class StartTestWithContainerExtension implements BeforeAllCallback, BeforeEachCallback {
 
 	/**
 	 * Logger.
@@ -95,6 +98,48 @@ public class StartTestWithContainerExtension implements BeforeAllCallback {
 			}, CloseableResource.class);
 		});
 
+	}
+
+	/**
+	 * Before each test, verifies that all containers are still running.
+	 * If any container is down, restarts it and marks the Spring application
+	 * context dirty so that connections are rebuilt with the new port mappings.
+	 */
+	@Override
+	public void beforeEach(
+			final ExtensionContext context) throws Exception {
+
+		final Class<?> testClass = context.getTestClass().orElseThrow();
+		final Collection<Field> containersFields = TestWithContainerExtensionHelper.getContainersFieldsFromTests(context);
+
+		boolean anyRestarted = false;
+		for (final Field field : containersFields) {
+			final GenericContainer<?> container = (GenericContainer<?>) field.get(null);
+			if (!container.isRunning()) {
+				StartTestWithContainerExtension.LOGGER.warn("Container '{}' is not running before test '{}'. Restarting.",
+						field.getName(), context.getDisplayName());
+				TestWithContainerExtensionHelper.startTestContainer(testClass, field);
+				anyRestarted = true;
+			}
+		}
+
+		// If any container was restarted, mark the Spring context dirty so that
+		// connections (DataSource, Redis, Artemis) are rebuilt with the new ports.
+		if (anyRestarted) {
+			try {
+				final ExtensionContext.Store store = context.getRoot().getStore(Namespace.create(SpringExtension.class));
+				final TestContextManager testContextManager = store.get(testClass, TestContextManager.class);
+				if (testContextManager != null) {
+					StartTestWithContainerExtension.LOGGER.info("Marking Spring application context dirty after container restart.");
+					testContextManager.getTestContext().markApplicationContextDirty(
+							org.springframework.test.annotation.DirtiesContext.HierarchyMode.EXHAUSTIVE);
+				}
+			}
+			catch (final Exception exception) {
+				StartTestWithContainerExtension.LOGGER.warn("Could not mark Spring context dirty after container restart: {}",
+						exception.getMessage());
+			}
+		}
 	}
 
 }
