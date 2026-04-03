@@ -31,18 +31,9 @@
 		<project.config.source.main.aspect.phase>none</project.config.source.main.aspect.phase>
 		<project.config.source.test.aspect.phase>none</project.config.source.test.aspect.phase>
 		<project.config.source.test.fork-count>1</project.config.source.test.fork-count>
-		<maven.dependency.version>3.8.1</maven.dependency.version>
-		<maven.compiler.version>3.14.0</maven.compiler.version>
-		<maven.aspectj.version>1.15.0</maven.aspectj.version>
-		<maven.source.version>3.3.1</maven.source.version>
-		<maven.javadoc.version>3.11.2</maven.javadoc.version>
-		<maven.jar.version>3.4.2</maven.jar.version>
-		<maven.exec.version>3.5.0</maven.exec.version>
-		<maven.asm.version>9.8</maven.asm.version>
-		<maven.assembly.version>3.7.1</maven.assembly.version>
-		<maven.jacoco.version>0.8.13</maven.jacoco.version>
-		<maven.surefire.version>3.5.3</maven.surefire.version>
-		<maven.gpg.version>3.2.7</maven.gpg.version>
+		<test.junit-jupiter.version>5.12.2</test.junit-jupiter.version>
+		<test.junit-platform.version>1.12.2</test.junit-platform.version>
+		<test.testcontainers.version>1.21.4</test.testcontainers.version>
 	</properties>
 
 	<scm>
@@ -64,112 +55,99 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-autoconfigure</artifactId>
+			<version>${spring.boot.version}</version>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
+			<version>${spring.boot.version}</version>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-tomcat</artifactId>
+			<version>${spring.boot.version}</version>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-jpa</artifactId>
+			<version>${spring.boot.version}</version>
 			<optional>true</optional>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-artemis</artifactId>
+			<version>${spring.boot.version}</version>
 			<optional>true</optional>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-cache</artifactId>
+			<version>${spring.boot.version}</version>
 			<optional>true</optional>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-redis</artifactId>
+			<version>${spring.boot.version}</version>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
+			<version>${spring.boot.version}</version>
 			<optional>true</optional>
 		</dependency>
 
 		<dependency>
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter-api</artifactId>
+			<version>${test.junit-jupiter.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter-engine</artifactId>
+			<version>${test.junit-jupiter.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter-params</artifactId>
+			<version>${test.junit-jupiter.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.junit.platform</groupId>
 			<artifactId>junit-platform-launcher</artifactId>
+			<version>${test.junit-platform.version}</version>
 			<scope>test</scope>
 		</dependency>
 
 		<dependency>
 			<groupId>org.testcontainers</groupId>
 			<artifactId>testcontainers</artifactId>
+			<version>${test.testcontainers.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.testcontainers</groupId>
 			<artifactId>junit-jupiter</artifactId>
+			<version>${test.testcontainers.version}</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
+			<version>${postgresql.version}</version>
 			<optional>true</optional>
 		</dependency>
 
 		<dependency>
 			<groupId>com.zaxxer</groupId>
 			<artifactId>HikariCP</artifactId>
+			<version>${hikaricp.version}</version>
 			<scope>test</scope>
 		</dependency>
 
 	</dependencies>
-
-	<build>
-		<plugins>
-			<plugin>
-				<groupId>org.codehaus.mojo</groupId>
-				<artifactId>flatten-maven-plugin</artifactId>
-				<version>1.6.0</version>
-				<configuration>
-					<flattenMode>ossrh</flattenMode>
-				</configuration>
-				<executions>
-					<execution>
-						<id>flatten</id>
-						<phase>process-resources</phase>
-						<goals>
-							<goal>flatten</goal>
-						</goals>
-					</execution>
-					<execution>
-						<id>flatten-clean</id>
-						<phase>clean</phase>
-						<goals>
-							<goal>clean</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-		</plugins>
-	</build>
 
 </project>
