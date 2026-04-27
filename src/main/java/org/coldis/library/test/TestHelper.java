@@ -273,7 +273,7 @@ public class TestHelper {
 	 */
 	@SuppressWarnings("resource")
 	public static GenericContainer<?> createArtemisContainer() {
-		return new GenericContainer<>("coldis/infrastructure-messaging-service:2.34")
+		return new GenericContainer<>("coldis/infrastructure-messaging-service:2.35.0")
 				.withCreateContainerCmdModifier(
 						cmd -> cmd.getHostConfig().withCpuCount(TestHelper.getCpuQuota()).withMemoryReservation(TestHelper.getMemoryReservationQuota())
 								.withMemory(TestHelper.getMemoryQuota()).withDiskQuota(TestHelper.getDiskQuota()))
