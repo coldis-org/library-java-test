@@ -252,7 +252,7 @@ public class TestHelper {
 	 */
 	@SuppressWarnings("resource")
 	public static GenericContainer<?> createPostgresContainer() {
-		return new GenericContainer<>("coldis/infrastructure-transactional-repository:7.0.1")
+		return new GenericContainer<>("coldis/infrastructure-transactional-repository:7.0.2")
 				.withCreateContainerCmdModifier(
 						cmd -> cmd.getHostConfig().withCpuCount(TestHelper.getCpuQuota()).withMemoryReservation(TestHelper.getMemoryReservationQuota())
 								.withMemory(TestHelper.getMemoryQuota()).withDiskQuota(TestHelper.getDiskQuota()))
@@ -261,10 +261,6 @@ public class TestHelper {
 						"REPLICATOR_USER_NAME", "replicator", "REPLICATOR_USER_PASSWORD", "replicator", "POSTGRES_DEFAULT_USER", TestHelper.TEST_USER_NAME,
 						"POSTGRES_DEFAULT_PASSWORD", TestHelper.TEST_USER_PASSWORD, "POSTGRES_DEFAULT_DATABASE", TestHelper.TEST_USER_NAME, "MAX_CONNECTIONS",
 						"200"))
-				// Bypass the entrypoint's `df` disk-size detection, which fails on first boot
-				// (data dir does not exist yet) and cascades to min_wal_size=0MB — rejected by
-				// Postgres 18. 2 GB is enough headroom for the WAL-size tuner percentages.
-				.withEnv("DISK_SIZE", "2147483648")
 				.waitingFor(Wait
 						.forSuccessfulCommand(
 								"PGPASSWORD=\"" + TestHelper.TEST_USER_PASSWORD + "\" psql -c 'SELECT 1;' -U \"" + TestHelper.TEST_USER_NAME + "\"")
