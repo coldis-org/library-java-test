@@ -252,7 +252,7 @@ public class TestHelper {
 	 */
 	@SuppressWarnings("resource")
 	public static GenericContainer<?> createPostgresContainer() {
-		return new GenericContainer<>("coldis/infrastructure-transactional-repository:5.0.10")
+		return new GenericContainer<>("coldis/infrastructure-transactional-repository:7.0.1")
 				.withCreateContainerCmdModifier(
 						cmd -> cmd.getHostConfig().withCpuCount(TestHelper.getCpuQuota()).withMemoryReservation(TestHelper.getMemoryReservationQuota())
 								.withMemory(TestHelper.getMemoryQuota()).withDiskQuota(TestHelper.getDiskQuota()))
