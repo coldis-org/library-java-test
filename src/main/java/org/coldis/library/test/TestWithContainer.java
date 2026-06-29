@@ -9,29 +9,27 @@ import java.lang.annotation.Target;
 import org.springframework.test.annotation.DirtiesContext;
 
 /**
- * Test with container.
+ * Test with container. Each test class gets a fresh Spring context, dirtied after the class, so it
+ * never reuses connections bound to a container address from a previous class.
  */
 @Inherited
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public @interface TestWithContainer {
 
 	/**
-	 * Whether containers should start in parallel. Defaults to {@code true}.
+	 * Whether containers should start in parallel.
 	 *
 	 * @return if the containers should start in parallel.
 	 */
 	boolean parallel() default true;
-	
-	/**
-	 * Whether to reuse containers. Defaults to {@code true}.
-	 */
-	boolean reuse() default true;
 
 	/**
-	 * Seconds to wait before stopping a container after the last test class
-	 * releases it. Gives the next test class time to acquire it. Defaults to 30.
+	 * Whether to reuse containers.
+	 *
+	 * @return if the containers should be reused.
 	 */
-	long stopDelay() default 15;
+	boolean reuse() default false;
 
 }
