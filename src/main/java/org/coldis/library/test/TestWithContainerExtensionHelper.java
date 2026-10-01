@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.junit.jupiter.api.extension.ExtensionContext;
@@ -25,6 +26,9 @@ public class TestWithContainerExtensionHelper {
 
 	/** Container usage reference counts. */
 	private static final ConcurrentHashMap<String, AtomicInteger> CONTAINER_REF_COUNTS = new ConcurrentHashMap<>();
+
+	/** Container acquisition and stop scheduling counts, used to tell a delayed stop that it was superseded. */
+	private static final ConcurrentHashMap<String, AtomicLong> CONTAINER_GENERATIONS = new ConcurrentHashMap<>();
 
 	/**
 	 * Gets the containers from tests.
@@ -188,6 +192,7 @@ public class TestWithContainerExtensionHelper {
 	 * @param containerKey Unique key identifying the container.
 	 */
 	public static void acquireContainer(final String containerKey) {
+		CONTAINER_GENERATIONS.computeIfAbsent(containerKey, key -> new AtomicLong(0)).incrementAndGet();
 		CONTAINER_REF_COUNTS.computeIfAbsent(containerKey, key -> new AtomicInteger(0)).incrementAndGet();
 		TestWithContainerExtensionHelper.LOGGER.debug("Container '{}' acquired, ref count: {}.", containerKey,
 				CONTAINER_REF_COUNTS.get(containerKey).get());
@@ -208,14 +213,17 @@ public class TestWithContainerExtensionHelper {
 
 	/**
 	 * Schedules a delayed container stop on a daemon thread. After the delay,
-	 * re-checks the ref count — if another test class acquired the container
-	 * during the wait, the stop is skipped.
+	 * the container is stopped only if it has no references and was neither
+	 * acquired nor scheduled to stop again during the wait — otherwise a timer
+	 * scheduled before a later release would stop it right after that release,
+	 * ignoring the delay.
 	 *
 	 * @param containerKey Unique key identifying the container.
 	 * @param container    The container to stop.
 	 * @param stopDelay    Seconds to wait before stopping.
 	 */
 	public static void scheduleDelayedStop(final String containerKey, final GenericContainer<?> container, final long stopDelay) {
+		final long generation = CONTAINER_GENERATIONS.computeIfAbsent(containerKey, key -> new AtomicLong(0)).incrementAndGet();
 		final Thread stopThread = new Thread(() -> {
 			try {
 				TestWithContainerExtensionHelper.LOGGER.info("Container '{}' has no references, waiting {}s before stopping.", containerKey, stopDelay);
@@ -226,12 +234,15 @@ public class TestWithContainerExtensionHelper {
 				return;
 			}
 			final AtomicInteger refCount = CONTAINER_REF_COUNTS.get(containerKey);
-			if (refCount == null || refCount.get() <= 0) {
+			if (CONTAINER_GENERATIONS.get(containerKey).get() != generation) {
+				TestWithContainerExtensionHelper.LOGGER.info("Container '{}' was acquired or scheduled to stop again during delay, leaving the stop to the latest release.", containerKey);
+			}
+			else if (refCount == null || refCount.get() <= 0) {
 				TestWithContainerExtensionHelper.LOGGER.info("Container '{}' still has no references after delay, stopping.", containerKey);
 				container.stop();
 			}
 			else {
-				TestWithContainerExtensionHelper.LOGGER.info("Container '{}' was re-acquired during delay, skipping stop.", containerKey);
+				TestWithContainerExtensionHelper.LOGGER.info("Container '{}' is still referenced by another test class after delay, skipping stop.", containerKey);
 			}
 		}, "container-stop-" + containerKey);
 		stopThread.start();
