@@ -13,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
 import org.junit.jupiter.api.extension.TestExecutionExceptionHandler;
 import org.junit.jupiter.api.extension.TestWatcher;
+import org.opentest4j.TestAbortedException;
 import org.springframework.test.context.TestContextManager;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 
@@ -201,6 +202,14 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 
 		// Retries the test method up to a maximum number of attempts.
 		final TestContextManager testContextManager = this.getTestContextManager(context);
+
+		// An aborted test (Assumptions) asked to be skipped, and another attempt cannot change that.
+		// Only the first attempt is checked: an abort on a later attempt must not hide a real failure.
+		if (throwable instanceof TestAbortedException) {
+			RetryExtension.LOGGER.info("Test " + context.getRequiredTestMethod().getDeclaringClass().getName() + "." + context.getRequiredTestMethod().getName()
+					+ " aborted, not retrying: " + throwable.getMessage());
+			throw throwable;
+		}
 
 		// Retries the test method up to the maximum number of attempts,
 		Throwable actualThrowable = throwable;
