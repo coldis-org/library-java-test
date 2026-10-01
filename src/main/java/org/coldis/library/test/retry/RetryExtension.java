@@ -182,6 +182,40 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 	}
 
 	/**
+	 * Runs the @AfterEach methods (subclass first, all of them even if one fails) and the Spring
+	 * after-test-method callbacks of a failed attempt. Their errors are only logged: the attempt
+	 * already failed and is retried.
+	 *
+	 * @param context            JUnit extension context
+	 * @param testContextManager Spring test context manager
+	 * @param attemptError       the attempt's error
+	 */
+	private void runAfterEach(
+			final ExtensionContext context,
+			final TestContextManager testContextManager,
+			final Throwable attemptError) {
+		final List<Method> afterEachMethods = this.getAnnotatedMethods(context.getRequiredTestInstance().getClass(), org.junit.jupiter.api.AfterEach.class);
+		RetryExtension.LOGGER.info("Found " + afterEachMethods.size() + " @AfterEach methods for " + context.getRequiredTestInstance().getClass().getName());
+		for (final Method method : afterEachMethods) {
+			try {
+				RetryExtension.LOGGER.info("Running @AfterEach: " + method.getDeclaringClass().getName() + "." + method.getName());
+				method.invoke(context.getRequiredTestInstance());
+			}
+			catch (final Throwable afterEachError) {
+				RetryExtension.LOGGER.error("Error running @AfterEach " + method.getDeclaringClass().getName() + "." + method.getName() + ": " + afterEachError.getMessage(),
+						afterEachError);
+			}
+		}
+		try {
+			testContextManager.afterTestMethod(context.getRequiredTestInstance(), context.getRequiredTestMethod(), attemptError);
+		}
+		catch (final Throwable afterTestMethodError) {
+			RetryExtension.LOGGER.error("Error finishing test context manager for " + context.getRequiredTestMethod().getDeclaringClass().getName() + "."
+					+ context.getRequiredTestMethod().getName(), afterTestMethodError);
+		}
+	}
+
+	/**
 	 * Core retry logic. Intercepts a thrown exception from a test method execution,
 	 * then re-executes the test method up to {@link #getMaxAttempts()} times,
 	 * unless fail-fast has already been triggered. Between attempts, waits for the
@@ -191,19 +225,17 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 	 * around each attempt and that any {@code @BeforeEach/@AfterEach} methods are
 	 * executed on the test instance. Each attempt's {@code @AfterEach} runs before
 	 * the next attempt's {@code @BeforeEach}; the last attempt's is left to JUnit,
-	 * which runs it once this handler returns or throws.
+	 * which runs it once this handler returns or throws (so an {@code @AfterEach}
+	 * error after a passing retry fails the test, as it would without retries).
 	 *
 	 * @param  context   JUnit extension context
 	 * @param  throwable the original test failure
-	 * @throws Throwable rethrows the original throwable if all attempts fail
+	 * @throws Throwable rethrows the last real (non-abort) failure if all attempts fail
 	 */
 	@Override
 	public void handleTestExecutionException(
 			final ExtensionContext context,
 			final Throwable throwable) throws Throwable {
-
-		// Retries the test method up to a maximum number of attempts.
-		final TestContextManager testContextManager = this.getTestContextManager(context);
 
 		// An aborted test (Assumptions) asked to be skipped, and another attempt cannot change that.
 		// Only the first attempt is checked: an abort on a later attempt must not hide a real failure.
@@ -213,8 +245,13 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 			throw throwable;
 		}
 
-		// Retries the test method up to the maximum number of attempts,
+		// Retries the test method up to a maximum number of attempts.
+		final TestContextManager testContextManager = this.getTestContextManager(context);
+
+		// Retries the test method up to the maximum number of attempts. The last real (non-abort) failure is
+		// what gets reported, so a test that failed and then aborted on its last attempt ends failed, not skipped.
 		Throwable actualThrowable = throwable;
+		Throwable lastFailure = throwable;
 		for (int attempt = 2; (attempt <= RetryExtension.getMaxAttempts()) && !FailFastExtension.hasFailed(); attempt++) {
 			// Cleans up the previous (failed) attempt before the next @BeforeEach, which would otherwise start
 			// from the state that attempt left behind. JUnit runs @AfterEach only after this handler, so it is
@@ -265,45 +302,14 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 				return;
 			}
 			actualThrowable = attemptError;
-
-		}
-
-		// If the test method failed after all attempts throw the exception.
-		throw actualThrowable;
-	}
-
-	/**
-	 * Runs the @AfterEach methods (subclass first, all of them even if one fails) and the Spring
-	 * after-test-method callbacks of a failed attempt. Their errors are only logged: the attempt
-	 * already failed and is retried.
-	 *
-	 * @param context            JUnit extension context
-	 * @param testContextManager Spring test context manager
-	 * @param attemptError       the attempt's error
-	 */
-	private void runAfterEach(
-			final ExtensionContext context,
-			final TestContextManager testContextManager,
-			final Throwable attemptError) {
-		final List<Method> afterEachMethods = this.getAnnotatedMethods(context.getRequiredTestInstance().getClass(), org.junit.jupiter.api.AfterEach.class);
-		RetryExtension.LOGGER.info("Found " + afterEachMethods.size() + " @AfterEach methods for " + context.getRequiredTestInstance().getClass().getName());
-		for (final Method method : afterEachMethods) {
-			try {
-				RetryExtension.LOGGER.info("Running @AfterEach: " + method.getDeclaringClass().getName() + "." + method.getName());
-				method.invoke(context.getRequiredTestInstance());
+			if (!(attemptError instanceof TestAbortedException)) {
+				lastFailure = attemptError;
 			}
-			catch (final Throwable afterEachError) {
-				RetryExtension.LOGGER.error("Error running @AfterEach " + method.getDeclaringClass().getName() + "." + method.getName() + ": " + afterEachError.getMessage(),
-						afterEachError);
-			}
+
 		}
-		try {
-			testContextManager.afterTestMethod(context.getRequiredTestInstance(), context.getRequiredTestMethod(), attemptError);
-		}
-		catch (final Throwable afterTestMethodError) {
-			RetryExtension.LOGGER.error("Error finishing test context manager for " + context.getRequiredTestMethod().getDeclaringClass().getName() + "."
-					+ context.getRequiredTestMethod().getName(), afterTestMethodError);
-		}
+
+		// If the test method failed after all attempts throw the last real failure.
+		throw lastFailure;
 	}
 
 }

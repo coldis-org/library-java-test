@@ -1,5 +1,8 @@
 package org.coldis.library.test.test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.coldis.library.test.TestWithRetryAndFailFast;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -8,8 +11,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Retried test whose @BeforeEach saves and changes shared state that its @AfterEach restores: the
- * state must be back to its original value once the retried test is done, and each @BeforeEach must
- * be matched by exactly one @AfterEach.
+ * state must be back to its original value once the retried test is done, and each attempt must run
+ * @BeforeEach, the test and @AfterEach, in that order.
  */
 @TestWithRetryAndFailFast
 public class RetryAndFailFastExtensionLifecycleFakeTest {
@@ -30,14 +33,9 @@ public class RetryAndFailFastExtensionLifecycleFakeTest {
   public static Integer RUNS = 0;
 
   /**
-   * @BeforeEach runs.
+   * Lifecycle calls, in order.
    */
-  public static Integer BEFORE_EACH_RUNS = 0;
-
-  /**
-   * @AfterEach runs.
-   */
-  public static Integer AFTER_EACH_RUNS = 0;
+  public static final List<String> CALLS = new ArrayList<>();
 
   /**
    * State saved by @BeforeEach.
@@ -51,8 +49,7 @@ public class RetryAndFailFastExtensionLifecycleFakeTest {
   public static void setup() {
     RetryAndFailFastExtensionLifecycleFakeTest.STATE = RetryAndFailFastExtensionLifecycleFakeTest.CONFIGURED;
     RetryAndFailFastExtensionLifecycleFakeTest.RUNS = 0;
-    RetryAndFailFastExtensionLifecycleFakeTest.BEFORE_EACH_RUNS = 0;
-    RetryAndFailFastExtensionLifecycleFakeTest.AFTER_EACH_RUNS = 0;
+    RetryAndFailFastExtensionLifecycleFakeTest.CALLS.clear();
   }
 
   /**
@@ -60,7 +57,7 @@ public class RetryAndFailFastExtensionLifecycleFakeTest {
    */
   @BeforeEach
   public void changeState() {
-    RetryAndFailFastExtensionLifecycleFakeTest.BEFORE_EACH_RUNS++;
+    RetryAndFailFastExtensionLifecycleFakeTest.CALLS.add("before");
     this.original = RetryAndFailFastExtensionLifecycleFakeTest.STATE;
     RetryAndFailFastExtensionLifecycleFakeTest.STATE = "changed-by-test";
   }
@@ -70,7 +67,7 @@ public class RetryAndFailFastExtensionLifecycleFakeTest {
    */
   @AfterEach
   public void restoreState() {
-    RetryAndFailFastExtensionLifecycleFakeTest.AFTER_EACH_RUNS++;
+    RetryAndFailFastExtensionLifecycleFakeTest.CALLS.add("after");
     RetryAndFailFastExtensionLifecycleFakeTest.STATE = this.original;
   }
 
@@ -80,6 +77,7 @@ public class RetryAndFailFastExtensionLifecycleFakeTest {
   @Test
   public void failOnce() {
     RetryAndFailFastExtensionLifecycleFakeTest.RUNS++;
+    RetryAndFailFastExtensionLifecycleFakeTest.CALLS.add("test");
     if (RetryAndFailFastExtensionLifecycleFakeTest.RUNS < 2) {
       throw new RuntimeException("Fake test failure, retrying...");
     }
