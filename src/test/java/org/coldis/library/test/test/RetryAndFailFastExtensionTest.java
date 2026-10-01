@@ -43,6 +43,31 @@ public class RetryAndFailFastExtensionTest {
   }
 
   /**
+   * Test that a retried test's @AfterEach runs before the next attempt's @BeforeEach, so state a
+   * @BeforeEach saves and its @AfterEach restores ends at its original value.
+   */
+  @Test
+  public void testRetryRestoresStateBetweenAttempts() {
+
+    // Executes a fake test that changes shared state in @BeforeEach and fails once.
+    final LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request()
+      .selectors(DiscoverySelectors.selectClass(RetryAndFailFastExtensionLifecycleFakeTest.class))
+      .build();
+    final Launcher launcher = LauncherFactory.create();
+    final SummaryGeneratingListener listener = new SummaryGeneratingListener();
+    launcher.registerTestExecutionListeners(listener);
+    launcher.execute(request);
+
+    // Validates the test passed on its second run and left the state as it found it.
+    Assertions.assertEquals(2, RetryAndFailFastExtensionLifecycleFakeTest.RUNS);
+    Assertions.assertEquals(1, listener.getSummary().getTestsSucceededCount());
+    Assertions.assertEquals(RetryAndFailFastExtensionLifecycleFakeTest.CONFIGURED, RetryAndFailFastExtensionLifecycleFakeTest.STATE,
+        "The retried attempt's @BeforeEach saw the state the failed attempt left behind.");
+    Assertions.assertEquals(2, RetryAndFailFastExtensionLifecycleFakeTest.BEFORE_EACH_RUNS);
+    Assertions.assertEquals(2, RetryAndFailFastExtensionLifecycleFakeTest.AFTER_EACH_RUNS, "Each @BeforeEach should be matched by exactly one @AfterEach.");
+  }
+
+  /**
    * Test that an aborted test (Assumptions) is not retried.
    */
   @Test
