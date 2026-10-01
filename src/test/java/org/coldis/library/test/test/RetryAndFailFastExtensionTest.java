@@ -3,6 +3,7 @@ package org.coldis.library.test.test;
 import java.util.List;
 
 import org.coldis.library.test.TestWithRetryAndFailFast;
+import org.coldis.library.test.failfast.FailFastExtension;
 import org.coldis.library.test.retry.RetryExtension;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -132,5 +133,6 @@ public class RetryAndFailFastExtensionTest {
     Assertions.assertEquals(RetryExtension.getMaxAttempts(), RetryAndFailFastExtensionAbortOnLastAttemptFakeTest.RUNS);
     Assertions.assertEquals(1, listener.getSummary().getTotalFailureCount());
     Assertions.assertEquals(0, listener.getSummary().getTestsAbortedCount());
+    Assertions.assertFalse(FailFastExtension.hasFailed(), "The fake test's failure must not set the fail-fast flag.");
   }
 }

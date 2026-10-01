@@ -1,7 +1,7 @@
 package org.coldis.library.test.test;
 
-import org.coldis.library.test.TestWithRetryAndFailFast;
 import org.coldis.library.test.retry.RetryExtension;
+import org.coldis.library.test.retry.TestWithRetry;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
@@ -10,10 +10,11 @@ import org.junit.jupiter.api.Test;
 /**
  * Test that fails on every attempt but the last, which aborts, for the retry and fail fast extension: the abort
  * must not turn the failure into a skip. Disabled so the build does not run (and fail on) it directly; only
- * {@link RetryAndFailFastExtensionTest} runs it.
+ * {@link RetryAndFailFastExtensionTest} runs it. Retry only, without fail fast: its failure must not set the
+ * fail-fast flag and skip the rest of the run.
  */
 @Disabled("Ends failed by design; run by RetryAndFailFastExtensionTest")
-@TestWithRetryAndFailFast
+@TestWithRetry
 public class RetryAndFailFastExtensionAbortOnLastAttemptFakeTest {
 
   /**

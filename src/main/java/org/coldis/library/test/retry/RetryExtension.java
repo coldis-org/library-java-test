@@ -202,8 +202,9 @@ public class RetryExtension implements TestExecutionExceptionHandler, TestWatche
 				method.invoke(context.getRequiredTestInstance());
 			}
 			catch (final Throwable afterEachError) {
-				RetryExtension.LOGGER.error("Error running @AfterEach " + method.getDeclaringClass().getName() + "." + method.getName() + ": " + afterEachError.getMessage(),
-						afterEachError);
+				final Throwable originalAfterEachError = this.getOriginalError(afterEachError);
+				RetryExtension.LOGGER.error("Error running @AfterEach " + method.getDeclaringClass().getName() + "." + method.getName() + ": "
+						+ originalAfterEachError.getMessage(), originalAfterEachError);
 			}
 		}
 		try {
