@@ -97,9 +97,9 @@ public class SpringTestHelper extends TestHelper {
 			final DataSource dataSource,
 			final String table) {
 		SQLException lastFailure = null;
-		boolean finished = false;
-		boolean retryable = true;
-		for (int attempt = 1; !finished && retryable && (attempt <= SpringTestHelper.TRUNCATE_ATTEMPTS); attempt++) {
+		boolean isTruncatedOrAbsent = false;
+		boolean isRetryable = true;
+		for (int attempt = 1; !isTruncatedOrAbsent && isRetryable && (attempt <= SpringTestHelper.TRUNCATE_ATTEMPTS); attempt++) {
 			if (attempt > 1) {
 				this.cancelOtherPostgresBackends();
 			}
@@ -110,16 +110,18 @@ public class SpringTestHelper extends TestHelper {
 					statement.execute("TRUNCATE TABLE " + table + " CASCADE");
 				}
 				connection.commit();
-				finished = true;
+				isTruncatedOrAbsent = true;
 			}
 			catch (final SQLException exception) {
+				// The state can be null (a pool timeout, for example): not retried.
+				final String sqlState = exception.getSQLState();
+				SpringTestHelper.LOGGER.debug("Truncate attempt {} failed for '{}' ({}): {}", attempt, table, sqlState, exception.getMessage());
 				lastFailure = exception;
-				finished = SpringTestHelper.UNDEFINED_TABLE_SQL_STATE.equals(exception.getSQLState());
-				retryable = SpringTestHelper.TRUNCATE_RETRY_SQL_STATES.contains(exception.getSQLState());
-				SpringTestHelper.LOGGER.debug("Truncate attempt {} failed for '{}': {}", attempt, table, exception.getMessage());
+				isTruncatedOrAbsent = SpringTestHelper.UNDEFINED_TABLE_SQL_STATE.equals(sqlState);
+				isRetryable = (sqlState != null) && SpringTestHelper.TRUNCATE_RETRY_SQL_STATES.contains(sqlState);
 			}
 		}
-		if (!finished) {
+		if (!isTruncatedOrAbsent) {
 			throw new IllegalStateException("Table '" + table + "' could not be truncated, so the test would start on the previous test's rows.",
 					lastFailure);
 		}

@@ -97,6 +97,8 @@ public class ContainerTestHelperATest extends SpringTestHelper {
 				final IllegalStateException failure = Assertions.assertThrows(IllegalStateException.class, () -> this.truncateTables(tableName));
 				Assertions.assertTrue(failure.getMessage().contains(tableName));
 				Assertions.assertInstanceOf(SQLException.class, failure.getCause());
+				// A lock timeout, retried until the last attempt.
+				Assertions.assertEquals("55P03", ((SQLException) failure.getCause()).getSQLState());
 			}
 			finally {
 				lockHolder.rollback();
@@ -104,6 +106,15 @@ public class ContainerTestHelperATest extends SpringTestHelper {
 		}
 		Assertions.assertEquals(1L, this.jdbcTemplate.queryForObject("SELECT count(*) FROM " + tableName, Long.class));
 		this.truncateTables(tableName);
+	}
+
+	/** Tests that an error other than a lock failure fails at once, naming the table. */
+	@Test
+	public void testTruncateTablesFailsAtOnceOnANonLockError() {
+		final String invalidTableName = "truncate test invalid name";
+		final IllegalStateException failure = Assertions.assertThrows(IllegalStateException.class, () -> this.truncateTables(invalidTableName));
+		Assertions.assertTrue(failure.getMessage().contains(invalidTableName));
+		Assertions.assertEquals("42601", ((SQLException) failure.getCause()).getSQLState());
 	}
 
 	/** Tests that a table that does not exist has nothing to truncate, instead of failing. */
