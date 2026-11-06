@@ -64,6 +64,43 @@ public class ContainerTestHelperATest extends SpringTestHelper {
 		}
 	}
 
+	/** Tests that truncating tables empties them. */
+	@Test
+	public void testTruncateTablesEmptiesTheTables() {
+		final String tableName = "truncate_test_emptied";
+		this.jdbcTemplate.update("CREATE TABLE IF NOT EXISTS " + tableName + " (id BIGINT)");
+		this.jdbcTemplate.update("INSERT INTO " + tableName + " (id) VALUES (1), (2)");
+		this.truncateTables(tableName);
+		Assertions.assertEquals(0L, this.jdbcTemplate.queryForObject("SELECT count(*) FROM " + tableName, Long.class));
+	}
+
+	/**
+	 * Tests that a table kept locked (by a session idle in a transaction, which
+	 * cancelling backends does not release) fails the truncation, naming the
+	 * table, instead of leaving its rows to the next test.
+	 */
+	@Test
+	public void testTruncateTablesFailsWhenATableStaysLocked() throws Exception {
+		final String tableName = "truncate_test_locked";
+		this.jdbcTemplate.update("CREATE TABLE IF NOT EXISTS " + tableName + " (id BIGINT)");
+		this.jdbcTemplate.update("INSERT INTO " + tableName + " (id) VALUES (1)");
+		try (Connection lockHolder = this.jdbcTemplate.getDataSource().getConnection()) {
+			lockHolder.setAutoCommit(false);
+			try (Statement statement = lockHolder.createStatement()) {
+				statement.execute("LOCK TABLE " + tableName + " IN ACCESS SHARE MODE");
+			}
+			try {
+				final IllegalStateException failure = Assertions.assertThrows(IllegalStateException.class, () -> this.truncateTables(tableName));
+				Assertions.assertTrue(failure.getMessage().contains(tableName));
+			}
+			finally {
+				lockHolder.rollback();
+			}
+		}
+		Assertions.assertEquals(1L, this.jdbcTemplate.queryForObject("SELECT count(*) FROM " + tableName, Long.class));
+		this.truncateTables(tableName);
+	}
+
 	/** Tests updating the sequence to random. */
 	@Test
 	public void testChangeSequenceToRandom() {
