@@ -2,8 +2,10 @@ package org.coldis.library.test;
 
 import java.security.SecureRandom;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Random;
+import java.util.Set;
 
 import javax.sql.DataSource;
 
@@ -34,6 +36,15 @@ public class SpringTestHelper extends TestHelper {
 
 	/** Attempts to truncate each table: the first one plus two retries. */
 	private static final int TRUNCATE_ATTEMPTS = 3;
+
+	/**
+	 * PostgreSQL states of the lock failures a truncation retries: lock not
+	 * available (lock timeout), query cancelled and deadlock detected.
+	 */
+	private static final Set<String> TRUNCATE_RETRY_SQL_STATES = Set.of("55P03", "57014", "40P01");
+
+	/** PostgreSQL state of a table that does not exist (nothing to truncate). */
+	private static final String UNDEFINED_TABLE_SQL_STATE = "42P01";
 
 	/** JDBC template. */
 	@Autowired(required = false)
@@ -70,11 +81,13 @@ public class SpringTestHelper extends TestHelper {
 	}
 
 	/**
-	 * Truncates one table, retrying a lock timeout after cancelling the other
-	 * PostgreSQL backends again (an async writer of the previous test may have
-	 * started in between). Fails when the table is still not truncated after
-	 * {@link #TRUNCATE_ATTEMPTS} attempts: continuing would start the next test on
-	 * the previous test's rows, and it would fail somewhere unrelated.
+	 * Truncates one table. A lock failure (lock timeout, cancelled statement or
+	 * deadlock) is retried after cancelling the other PostgreSQL backends again (an
+	 * async writer of the previous test may have started in between); a table that
+	 * does not exist has nothing to truncate. Fails on any other error, or when a
+	 * lock failure persists after {@link #TRUNCATE_ATTEMPTS} attempts: continuing
+	 * would start the next test on the previous test's rows, and it would fail
+	 * somewhere unrelated.
 	 *
 	 * @param  dataSource            Data source.
 	 * @param  table                 Name of the table to truncate.
@@ -83,9 +96,10 @@ public class SpringTestHelper extends TestHelper {
 	private void truncateTable(
 			final DataSource dataSource,
 			final String table) {
-		Exception lastFailure = null;
-		boolean truncated = false;
-		for (int attempt = 1; !truncated && (attempt <= SpringTestHelper.TRUNCATE_ATTEMPTS); attempt++) {
+		SQLException lastFailure = null;
+		boolean finished = false;
+		boolean retryable = true;
+		for (int attempt = 1; !finished && retryable && (attempt <= SpringTestHelper.TRUNCATE_ATTEMPTS); attempt++) {
 			if (attempt > 1) {
 				this.cancelOtherPostgresBackends();
 			}
@@ -96,16 +110,18 @@ public class SpringTestHelper extends TestHelper {
 					statement.execute("TRUNCATE TABLE " + table + " CASCADE");
 				}
 				connection.commit();
-				truncated = true;
+				finished = true;
 			}
-			catch (final Exception exception) {
+			catch (final SQLException exception) {
 				lastFailure = exception;
+				finished = SpringTestHelper.UNDEFINED_TABLE_SQL_STATE.equals(exception.getSQLState());
+				retryable = SpringTestHelper.TRUNCATE_RETRY_SQL_STATES.contains(exception.getSQLState());
 				SpringTestHelper.LOGGER.debug("Truncate attempt {} failed for '{}': {}", attempt, table, exception.getMessage());
 			}
 		}
-		if (!truncated) {
-			throw new IllegalStateException("Table '" + table + "' could not be truncated after " + SpringTestHelper.TRUNCATE_ATTEMPTS
-					+ " attempts, so the test would start on the previous test's rows.", lastFailure);
+		if (!finished) {
+			throw new IllegalStateException("Table '" + table + "' could not be truncated, so the test would start on the previous test's rows.",
+					lastFailure);
 		}
 	}
 

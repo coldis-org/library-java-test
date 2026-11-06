@@ -3,7 +3,11 @@ package org.coldis.library.test.test;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 
 import org.coldis.library.test.SpringTestHelper;
 import org.coldis.library.test.StartTestWithContainerExtension;
@@ -92,6 +96,7 @@ public class ContainerTestHelperATest extends SpringTestHelper {
 			try {
 				final IllegalStateException failure = Assertions.assertThrows(IllegalStateException.class, () -> this.truncateTables(tableName));
 				Assertions.assertTrue(failure.getMessage().contains(tableName));
+				Assertions.assertInstanceOf(SQLException.class, failure.getCause());
 			}
 			finally {
 				lockHolder.rollback();
@@ -99,6 +104,44 @@ public class ContainerTestHelperATest extends SpringTestHelper {
 		}
 		Assertions.assertEquals(1L, this.jdbcTemplate.queryForObject("SELECT count(*) FROM " + tableName, Long.class));
 		this.truncateTables(tableName);
+	}
+
+	/** Tests that a table that does not exist has nothing to truncate, instead of failing. */
+	@Test
+	public void testTruncateTablesSkipsAMissingTable() {
+		final String tableName = "truncate_test_missing";
+		this.jdbcTemplate.update("DROP TABLE IF EXISTS " + tableName);
+		Assertions.assertDoesNotThrow(() -> this.truncateTables(tableName));
+	}
+
+	/**
+	 * Tests that a lock held by a running statement (as an async writer of the
+	 * previous test would) is released by cancelling the other backends, so the
+	 * table is truncated.
+	 */
+	@Test
+	public void testTruncateTablesCancelsARunningLockHolder() throws Exception {
+		final String tableName = "truncate_test_running_holder";
+		this.jdbcTemplate.update("CREATE TABLE IF NOT EXISTS " + tableName + " (id BIGINT)");
+		this.jdbcTemplate.update("INSERT INTO " + tableName + " (id) VALUES (1)");
+		final String holderQuery = "SELECT count(*) FROM " + tableName + ", pg_sleep(30)";
+		final CompletableFuture<Void> lockHolder = CompletableFuture.runAsync(() -> {
+			try (Connection connection = this.jdbcTemplate.getDataSource().getConnection();
+					Statement statement = connection.createStatement()) {
+				statement.execute(holderQuery);
+			}
+			catch (final SQLException exception) {
+				throw new CompletionException(exception);
+			}
+		});
+		TestHelper.waitUntilValid(
+				() -> this.jdbcTemplate.queryForObject("SELECT count(*) FROM pg_stat_activity WHERE state = 'active' AND query = ?", Long.class,
+						holderQuery),
+				runningHolders -> runningHolders > 0, TestHelper.LONG_WAIT, TestHelper.VERY_SHORT_WAIT);
+		this.truncateTables(tableName);
+		Assertions.assertEquals(0L, this.jdbcTemplate.queryForObject("SELECT count(*) FROM " + tableName, Long.class));
+		final ExecutionException holderFailure = Assertions.assertThrows(ExecutionException.class, lockHolder::get);
+		Assertions.assertEquals("57014", ((SQLException) holderFailure.getCause()).getSQLState());
 	}
 
 	/** Tests updating the sequence to random. */
