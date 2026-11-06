@@ -81,13 +81,29 @@ public class SpringTestHelper extends TestHelper {
 	}
 
 	/**
+	 * Terminates the other PostgreSQL backends on the current database that are
+	 * idle inside an open transaction. Such a backend keeps its locks, and
+	 * cancelling does not release them (there is no running statement to cancel):
+	 * in tests it is typically an async flow of the previous test holding its
+	 * transaction open between statements. Its connection is closed; the pool
+	 * replaces it.
+	 */
+	public void terminateIdleInTransactionPostgresBackends() {
+		this.jdbcTemplate.execute(
+				"SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+						+ " WHERE pid <> pg_backend_pid() AND datname = current_database()"
+						+ " AND state IN ('idle in transaction', 'idle in transaction (aborted)')");
+	}
+
+	/**
 	 * Truncates one table. A lock failure (lock timeout, cancelled statement or
 	 * deadlock) is retried after cancelling the other PostgreSQL backends again (an
-	 * async writer of the previous test may have started in between); a table that
-	 * does not exist has nothing to truncate. Fails on any other error, or when a
-	 * lock failure persists after {@link #TRUNCATE_ATTEMPTS} attempts: continuing
-	 * would start the next test on the previous test's rows, and it would fail
-	 * somewhere unrelated.
+	 * async writer of the previous test may have started in between) and
+	 * terminating the ones idle inside a transaction (whose locks cancelling does
+	 * not release); a table that does not exist has nothing to truncate. Fails on
+	 * any other error, or when a lock failure persists after
+	 * {@link #TRUNCATE_ATTEMPTS} attempts: continuing would start the next test on
+	 * the previous test's rows, and it would fail somewhere unrelated.
 	 *
 	 * @param  dataSource            Data source.
 	 * @param  table                 Name of the table to truncate.
@@ -102,6 +118,7 @@ public class SpringTestHelper extends TestHelper {
 		for (int attempt = 1; !isTruncatedOrAbsent && isRetryable && (attempt <= SpringTestHelper.TRUNCATE_ATTEMPTS); attempt++) {
 			if (attempt > 1) {
 				this.cancelOtherPostgresBackends();
+				this.terminateIdleInTransactionPostgresBackends();
 			}
 			try (final Connection connection = dataSource.getConnection()) {
 				connection.setAutoCommit(false);
