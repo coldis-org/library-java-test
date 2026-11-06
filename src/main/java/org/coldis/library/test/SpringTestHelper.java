@@ -2,7 +2,12 @@ package org.coldis.library.test;
 
 import java.security.SecureRandom;
 import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Random;
+import java.util.Set;
+
+import javax.sql.DataSource;
 
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientRequestor;
@@ -28,6 +33,18 @@ public class SpringTestHelper extends TestHelper {
 
 	/** Random. */
 	protected static final Random RANDOM = new SecureRandom();
+
+	/** Attempts to truncate each table: the first one plus two retries. */
+	private static final int TRUNCATE_ATTEMPTS = 3;
+
+	/**
+	 * PostgreSQL states of the lock failures a truncation retries: lock not
+	 * available (lock timeout), query cancelled and deadlock detected.
+	 */
+	private static final Set<String> TRUNCATE_RETRY_SQL_STATES = Set.of("55P03", "57014", "40P01");
+
+	/** PostgreSQL state of a table that does not exist (nothing to truncate). */
+	private static final String UNDEFINED_TABLE_SQL_STATE = "42P01";
 
 	/** JDBC template. */
 	@Autowired(required = false)
@@ -64,28 +81,65 @@ public class SpringTestHelper extends TestHelper {
 	}
 
 	/**
-	 * Truncates the given tables with per-table retries and lock timeout. Cancels
+	 * Truncates one table. A lock failure (lock timeout, cancelled statement or
+	 * deadlock) is retried after cancelling the other PostgreSQL backends again (an
+	 * async writer of the previous test may have started in between); a table that
+	 * does not exist has nothing to truncate. Fails on any other error, or when a
+	 * lock failure persists after {@link #TRUNCATE_ATTEMPTS} attempts: continuing
+	 * would start the next test on the previous test's rows, and it would fail
+	 * somewhere unrelated.
+	 *
+	 * @param  dataSource            Data source.
+	 * @param  table                 Name of the table to truncate.
+	 * @throws IllegalStateException If the table could not be truncated.
+	 */
+	private void truncateTable(
+			final DataSource dataSource,
+			final String table) {
+		SQLException lastFailure = null;
+		boolean isTruncatedOrAbsent = false;
+		boolean isRetryable = true;
+		for (int attempt = 1; !isTruncatedOrAbsent && isRetryable && (attempt <= SpringTestHelper.TRUNCATE_ATTEMPTS); attempt++) {
+			if (attempt > 1) {
+				this.cancelOtherPostgresBackends();
+			}
+			try (final Connection connection = dataSource.getConnection()) {
+				connection.setAutoCommit(false);
+				try (final Statement statement = connection.createStatement()) {
+					statement.execute("SET LOCAL lock_timeout = '500ms'");
+					statement.execute("TRUNCATE TABLE " + table + " CASCADE");
+				}
+				connection.commit();
+				isTruncatedOrAbsent = true;
+			}
+			catch (final SQLException exception) {
+				// The state can be null (a pool timeout, for example): not retried.
+				final String sqlState = exception.getSQLState();
+				SpringTestHelper.LOGGER.debug("Truncate attempt {} failed for '{}' ({}): {}", attempt, table, sqlState, exception.getMessage());
+				lastFailure = exception;
+				isTruncatedOrAbsent = SpringTestHelper.UNDEFINED_TABLE_SQL_STATE.equals(sqlState);
+				isRetryable = (sqlState != null) && SpringTestHelper.TRUNCATE_RETRY_SQL_STATES.contains(sqlState);
+			}
+		}
+		if (!isTruncatedOrAbsent) {
+			throw new IllegalStateException("Table '" + table + "' could not be truncated, so the test would start on the previous test's rows.",
+					lastFailure);
+		}
+	}
+
+	/**
+	 * Truncates the given tables, each with retries and a lock timeout. Cancels
 	 * other PostgreSQL backends before truncating to avoid lock contention.
 	 *
-	 * @param tableNames Names of the tables to truncate.
+	 * @param  tableNames            Names of the tables to truncate.
+	 * @throws IllegalStateException If a table could not be truncated.
 	 */
 	public void truncateTables(
 			final String... tableNames) {
 		this.cancelOtherPostgresBackends();
-		final javax.sql.DataSource dataSource = this.jdbcTemplate.getDataSource();
+		final DataSource dataSource = this.jdbcTemplate.getDataSource();
 		for (final String table : tableNames) {
-			for (int attempt = 0; attempt < 3; attempt++) {
-				try (final Connection connection = dataSource.getConnection()) {
-					connection.setAutoCommit(false);
-					connection.createStatement().execute("SET LOCAL lock_timeout = '500ms'");
-					connection.createStatement().execute("TRUNCATE TABLE " + table + " CASCADE");
-					connection.commit();
-					break;
-				}
-				catch (final Exception exception) {
-					SpringTestHelper.LOGGER.debug("Truncate attempt {} failed for '{}': {}", attempt + 1, table, exception.getMessage());
-				}
-			}
+			this.truncateTable(dataSource, table);
 		}
 	}
 
