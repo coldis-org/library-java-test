@@ -126,7 +126,8 @@
 		<dependency>
 			<groupId>com.zaxxer</groupId>
 			<artifactId>HikariCP</artifactId>
-			<scope>test</scope>
+			<!-- Optional: SpringTestHelper soft-evicts the pooled connections after terminating backends when Hikari is present. -->
+			<optional>true</optional>
 		</dependency>
 
 	</dependencies>

@@ -19,7 +19,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.CacheManager;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.util.ClassUtils;
+
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.HikariPoolMXBean;
 
 /**
  * Spring test helper.
@@ -45,6 +50,45 @@ public class SpringTestHelper extends TestHelper {
 
 	/** PostgreSQL state of a table that does not exist (nothing to truncate). */
 	private static final String UNDEFINED_TABLE_SQL_STATE = "42P01";
+
+	/** If Hikari is on the classpath (an optional dependency of this library). */
+	private static final boolean IS_HIKARI_PRESENT = ClassUtils.isPresent("com.zaxxer.hikari.HikariDataSource", SpringTestHelper.class.getClassLoader());
+
+	/**
+	 * Hikari pools of the context. A separate class, so Hikari types are only
+	 * loaded when Hikari is present.
+	 */
+	private static final class HikariPools {
+
+		/**
+		 * Soft-evicts the connections of every Hikari pool among the context's data
+		 * sources: idle ones are closed now, in-use ones when returned, and the pools
+		 * open new ones.
+		 *
+		 * @param applicationContext Application context.
+		 */
+		private static void softEvictConnections(
+				final ApplicationContext applicationContext) {
+			for (final DataSource dataSource : applicationContext.getBeansOfType(DataSource.class).values()) {
+				try {
+					if (dataSource.isWrapperFor(HikariDataSource.class)) {
+						final HikariPoolMXBean pool = dataSource.unwrap(HikariDataSource.class).getHikariPoolMXBean();
+						if (pool != null) {
+							pool.softEvictConnections();
+						}
+					}
+				}
+				catch (final SQLException exception) {
+					throw new IllegalStateException("The pooled connections could not be evicted.", exception);
+				}
+			}
+		}
+
+	}
+
+	/** Application context (to reach the connection pools). */
+	@Autowired(required = false)
+	protected ApplicationContext applicationContext;
 
 	/** JDBC template. */
 	@Autowired(required = false)
@@ -81,13 +125,47 @@ public class SpringTestHelper extends TestHelper {
 	}
 
 	/**
+	 * Terminates the other client backends on the current PostgreSQL database
+	 * that have a transaction open, running or idle inside it. A backend idle in a
+	 * transaction keeps its locks and cancelling does not release them (there is no
+	 * running statement to cancel): in tests it is typically an async flow of the
+	 * previous test holding its transaction open between statements. A running
+	 * one is included because a cancel is only a signal: right after it, the
+	 * backend may not be idle yet. Their connections are closed; pools replace
+	 * them. Server processes (autovacuum and the like) are left alone.
+	 *
+	 * <p>For disposable test databases only: it ends every other client's
+	 * transaction on the database the helper's data source points at.
+	 */
+	public void terminateOtherTransactionPostgresBackends() {
+		this.jdbcTemplate.execute(
+				"SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+						+ " WHERE pid <> pg_backend_pid() AND datname = current_database()"
+						+ " AND backend_type = 'client backend' AND xact_start IS NOT NULL");
+	}
+
+	/**
+	 * Soft-evicts the connections of the context's Hikari pools, so a connection
+	 * whose backend was terminated is not handed to a later test: idle ones are
+	 * closed now, in-use ones when returned, and the pools open new ones. Does
+	 * nothing without Hikari or a Spring context.
+	 */
+	public void softEvictPooledConnections() {
+		if (SpringTestHelper.IS_HIKARI_PRESENT && (this.applicationContext != null)) {
+			HikariPools.softEvictConnections(this.applicationContext);
+		}
+	}
+
+	/**
 	 * Truncates one table. A lock failure (lock timeout, cancelled statement or
 	 * deadlock) is retried after cancelling the other PostgreSQL backends again (an
-	 * async writer of the previous test may have started in between); a table that
-	 * does not exist has nothing to truncate. Fails on any other error, or when a
-	 * lock failure persists after {@link #TRUNCATE_ATTEMPTS} attempts: continuing
-	 * would start the next test on the previous test's rows, and it would fail
-	 * somewhere unrelated.
+	 * async writer of the previous test may have started in between) and
+	 * terminating the ones with a transaction open (an idle one's locks are not
+	 * released by cancelling); a table that does not exist has nothing to
+	 * truncate. Fails on
+	 * any other error, or when a lock failure persists after
+	 * {@link #TRUNCATE_ATTEMPTS} attempts: continuing would start the next test on
+	 * the previous test's rows, and it would fail somewhere unrelated.
 	 *
 	 * @param  dataSource            Data source.
 	 * @param  table                 Name of the table to truncate.
@@ -102,6 +180,8 @@ public class SpringTestHelper extends TestHelper {
 		for (int attempt = 1; !isTruncatedOrAbsent && isRetryable && (attempt <= SpringTestHelper.TRUNCATE_ATTEMPTS); attempt++) {
 			if (attempt > 1) {
 				this.cancelOtherPostgresBackends();
+				this.terminateOtherTransactionPostgresBackends();
+				this.softEvictPooledConnections();
 			}
 			try (final Connection connection = dataSource.getConnection()) {
 				connection.setAutoCommit(false);
