@@ -139,17 +139,51 @@ public class ContainerTestHelperATest extends SpringTestHelper {
 				throw new CompletionException(exception);
 			}
 		});
-		TestHelper.waitUntilValid(
+		Assertions.assertTrue(TestHelper.waitUntilValid(
 				() -> this.jdbcTemplate.queryForObject(
 						"SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction' AND query = ?", Long.class, asyncFlowStep),
-				idleFlows -> idleFlows > 0, TestHelper.LONG_WAIT, TestHelper.VERY_SHORT_WAIT);
+				idleFlows -> idleFlows > 0, TestHelper.LONG_WAIT, TestHelper.VERY_SHORT_WAIT), "the async flow must be idle in its transaction");
 		this.truncateTables(tableName);
 		Assertions.assertEquals(0L, this.jdbcTemplate.queryForObject("SELECT count(*) FROM " + tableName, Long.class));
-		// The async flow's session was terminated by the retry.
-		Assertions.assertThrows(ExecutionException.class, asyncFlow::get);
+		// The async flow's session was terminated by the retry (admin shutdown).
+		final ExecutionException asyncFlowFailure = Assertions.assertThrows(ExecutionException.class, asyncFlow::get);
+		Assertions.assertEquals("57P01", ((SQLException) asyncFlowFailure.getCause()).getSQLState());
 	}
 
-	/** Tests that an error other than a lock failure fails at once, naming the table. */
+	/**
+	 * Tests that a pooled connection whose backend the truncation's retry
+	 * terminated is evicted from the pool: the table is truncated, and the pool
+	 * keeps handing out working connections afterwards.
+	 */
+	@Test
+	public void testTruncateTablesEvictsTheTerminatedPooledConnection() throws Exception {
+		final String tableName = "truncate_test_pooled_holder";
+		this.jdbcTemplate.update("CREATE TABLE IF NOT EXISTS " + tableName + " (id BIGINT)");
+		this.jdbcTemplate.update("INSERT INTO " + tableName + " (id) VALUES (1)");
+		final Connection pooledHolder = this.jdbcTemplate.getDataSource().getConnection();
+		pooledHolder.setAutoCommit(false);
+		try (Statement statement = pooledHolder.createStatement()) {
+			statement.execute("LOCK TABLE " + tableName + " IN ACCESS SHARE MODE");
+		}
+		this.truncateTables(tableName);
+		Assertions.assertEquals(0L, this.jdbcTemplate.queryForObject("SELECT count(*) FROM " + tableName, Long.class));
+		Assertions.assertFalse(pooledHolder.isValid(2));
+		pooledHolder.close();
+		for (int query = 0; query < 20; query++) {
+			Assertions.assertEquals(1, this.jdbcTemplate.queryForObject("SELECT 1", Integer.class));
+		}
+	}
+
+	/**
+	 * Tests that an error other than a lock failure fails at once, naming the
+	 * table.
+	 *
+	 * <p>Not tested, on purpose: a lock failure persisting through every attempt.
+	 * The retries terminate every other session holding a transaction, and the
+	 * test database disables prepared transactions (the only holders a
+	 * termination cannot reach), so no such lock can be held here. That path
+	 * throws the same exception as this one, after the last attempt.
+	 */
 	@Test
 	public void testTruncateTablesFailsAtOnceOnANonLockError() {
 		final String invalidTableName = "truncate test invalid name";
