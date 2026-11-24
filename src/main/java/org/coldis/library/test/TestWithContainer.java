@@ -30,8 +30,13 @@ public @interface TestWithContainer {
 
 	/**
 	 * Seconds to wait before stopping a container after the last test class
-	 * releases it. Gives the next test class time to acquire it. Defaults to 30.
+	 * releases it. Gives the next test class time to acquire it. Defaults to 300.
+	 * A test JVM usually caches its Spring context with the containers' mapped
+	 * ports; if a container stops while another test class runs (e.g. one that
+	 * starts its own slow container) and is started again, it gets new ports and
+	 * the cached context keeps the old ones, so every later class in that JVM
+	 * fails. Containers are still removed when the JVM exits.
 	 */
-	long stopDelay() default 15;
+	long stopDelay() default 300;
 
 }
