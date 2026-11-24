@@ -245,6 +245,9 @@ public class TestWithContainerExtensionHelper {
 				TestWithContainerExtensionHelper.LOGGER.info("Container '{}' is still referenced by another test class after delay, skipping stop.", containerKey);
 			}
 		}, "container-stop-" + containerKey);
+		// Daemon, so a pending delayed stop never keeps the JVM alive after the tests finish (the
+		// containers are still removed by Testcontainers when the JVM exits).
+		stopThread.setDaemon(true);
 		stopThread.start();
 	}
 
